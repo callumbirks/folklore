@@ -173,7 +173,6 @@ impl<T> Drop for ConcurrentArena<T> {
 unsafe impl<T> Send for ConcurrentArena<T> {}
 unsafe impl<T> Sync for ConcurrentArena<T> {}
 
-#[cfg(feature = "std")]
 impl<T> Debug for ConcurrentArena<T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("ConcurrentArena")
@@ -184,7 +183,6 @@ impl<T> Debug for ConcurrentArena<T> {
     }
 }
 
-#[cfg(feature = "std")]
 impl<T> Debug for ConcurrentArray<T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("ConcurrentArray")
