@@ -44,10 +44,23 @@ fn insert_duplicate_removed() {
 }
 
 #[test]
-fn max_capacity() {
+fn full() {
     let map: Map<zstr<17>, u16> = Map::new(128);
     #[allow(clippy::cast_possible_truncation)]
     // Capacity may be slightly more than the requested capacity
+    let capacity = map.capacity as u16;
+    for i in 0..capacity {
+        let f = format!("Answer{i}");
+        let key: zstr<17> = zstr::make(f.as_str());
+        assert!(map.insert(key, i));
+    }
+    assert!(!map.insert(zstr::make("Overflow"), 77));
+}
+
+#[test]
+fn max_capacity() {
+    let map: Map<zstr<17>, u16> = Map::new(i16::MAX as usize);
+    #[allow(clippy::cast_possible_truncation)]
     let capacity = map.capacity as u16;
     for i in 0..capacity {
         let f = format!("Answer{i}");

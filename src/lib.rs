@@ -48,18 +48,27 @@ where
     K: Eq + Hash,
     V: NoUninit,
 {
+    /// Creates a new [`Map<K, V>`] which can store `capacity` amount of K/V.
+    ///
+    /// # Panics
+    /// Panics if capacity is greater than `i16::MAX`.
     #[must_use]
     pub fn new(capacity: usize) -> Self {
+        // This assertion is only ran at compile time
         generic_asserts!((V);
-            NON_ZST: size_of::<V>() == size_of::<OffsetT>();
+            VALUE_SIZE: size_of::<V>() == size_of::<OffsetT>();
         );
+        // Panic if capacity > i16::MAX
+        assert!(i16::try_from(capacity).is_ok());
         #[allow(clippy::cast_sign_loss)]
         #[allow(clippy::cast_possible_truncation)]
         #[allow(clippy::cast_precision_loss)]
         // The allocated size of the table is larger than the capacity to allow for LOAD_FACTOR,
         // which improves performance. This also means there will always be empty cells, which
-        // allows for some optimizations
+        // means the unconditional loops in get/insert will never be infinite.
         let table_size = ((capacity as f64 / LOAD_FACTOR) as usize).next_power_of_two();
+        // Ensure the highest possible offset won't overflow
+        debug_assert!(table_size - 1 <= OffsetT::MAX as usize);
         #[allow(clippy::cast_sign_loss)]
         #[allow(clippy::cast_possible_truncation)]
         #[allow(clippy::cast_precision_loss)]
