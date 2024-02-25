@@ -50,7 +50,7 @@ where
 impl<K, V> Map<K, V>
 where
     K: Eq + Hash,
-    V: NoUninit,
+    V: NoUninit + Eq,
 {
     /// Creates a new [`Map<K, V>`] which can store `capacity` amount of K/V.
     ///
@@ -139,6 +139,63 @@ where
             }
             // If the cell we tried was already in use, and its associated key is not equivalent to
             // key, this is a collision, so try the next cell.
+            index = wrap_index(index as u64 + 1, self.capacity);
+        }
+    }
+
+    /// Update a value, only if it matches the expected value. Returns a Result containing the
+    /// previous value.
+    /// # Errors
+    /// Returns an error if the key does not exist in the map, or if the value did not match the
+    /// expected value.
+    pub fn compare_exchange<Q: ?Sized>(&mut self, key: &Q, expected: V, new_val: V) -> Result<V, V>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq,
+    {
+        let table = unsafe { &*self.table };
+        let buckets = table.bucket_slice();
+        let size_mask = table.size_mask;
+
+        let hash = hash::<Q, SipHasher13>(key);
+        let mut index = wrap_index(hash, self.capacity);
+
+        loop {
+            let cell = get_cell(buckets, index, size_mask);
+            if let Ok(previous) =
+                cell.fetch_update(SeqCst, SeqCst, |current| match current.key_offset {
+                    constants::EMPTY_KEY => Some(current),
+                    constants::DELETED_KEY => None,
+                    _ => {
+                        let key_offset = current.key_offset - constants::MIN_KEY;
+                        let found_key = self.keys.get(key_offset as usize)?;
+                        if found_key.borrow() == key {
+                            if current.value == expected {
+                                // Key matches, value matches, update to new value
+                                Some(Cell {
+                                    key_offset: current.key_offset,
+                                    value: new_val,
+                                })
+                            } else {
+                                // Key matches, value doesn't, return without updating
+                                Some(current)
+                            }
+                        } else {
+                            // Key doesn't match, try the next cell incase of collision
+                            None
+                        }
+                    }
+                })
+            {
+                // If fetch_update was Ok, we either; updated successfully, or...
+                if previous.value == expected {
+                    return Ok(previous.value);
+                }
+                // Didn't, because the value didn't match expected
+                return Err(previous.value);
+            }
+            // If the `fetch_update` was not_ok, the cell was a potential collision, so try the
+            // next cell
             index = wrap_index(index as u64 + 1, self.capacity);
         }
     }
@@ -280,7 +337,7 @@ where
 impl<K, V> Default for Map<K, V>
 where
     K: Eq + Hash,
-    V: NoUninit,
+    V: NoUninit + Eq,
 {
     fn default() -> Self {
         Self::new(2048)

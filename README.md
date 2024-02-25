@@ -6,7 +6,6 @@ This has some major limitations compared to a more general hash-map implementati
 - It cannot be grown past its initial capacity.
 - The capacity is limited to `i16::MAX`_*_.
 - (Currently) It can only store values which are exactly 2 bytes.
-- Once inserted, values cannot be modified (although they can be removed).
 - Lookup performance is degraded when the map contains many "tombstones" (deleted entries).
 
 The only benefits are:
