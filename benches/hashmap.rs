@@ -16,7 +16,7 @@ fn bench_folklore_hashmap(c: &mut Criterion) {
     group.throughput(Throughput::Elements(NUM_OPS * 6 * 2_u64));
     group.sample_size(10);
     group.bench_function("insert_and_remove", |b| {
-        let mut map = folklore::Map::new(NUM_KEYS);
+        let mut map = folklore::Map::with_capacity(NUM_KEYS);
         let mut rng = thread_rng();
         let mut bits: u64 = rng.gen();
         let mut mask = 0u64;

@@ -8,7 +8,7 @@ mod test;
 mod util;
 
 use crate::array::ConcurrentArray;
-use atomic::Atomic;
+use atomic::{Atomic, Ordering};
 use bytemuck::NoUninit;
 use core::borrow::Borrow;
 use core::fmt::Debug;
@@ -57,7 +57,7 @@ where
     /// # Panics
     /// Panics if capacity is greater than `i16::MAX`.
     #[must_use]
-    pub fn new(capacity: usize) -> Self {
+    pub fn with_capacity(capacity: usize) -> Self {
         // This assertion is only ran at compile time
         generic_asserts!((V);
             VALUE_SIZE: size_of::<V>() == size_of::<OffsetT>();
@@ -89,7 +89,7 @@ where
     /// Insert a key-value pair into the map. Returns a bool representing success.
     /// Will succeed unless the key is already in the map or the map is at max capacity.
     pub fn insert(&mut self, key: K, value: V) -> bool {
-        if self.count.load(Relaxed) >= self.capacity {
+        if self.count.load(SeqCst) >= self.capacity {
             return false;
         }
         // The index of the cell is the key's hash (wrapped to fit)
@@ -143,63 +143,6 @@ where
         }
     }
 
-    /// Update a value, only if it matches the expected value. Returns a Result containing the
-    /// previous value.
-    /// # Errors
-    /// Returns an error if the key does not exist in the map, or if the value did not match the
-    /// expected value.
-    pub fn compare_exchange<Q: ?Sized>(&mut self, key: &Q, expected: V, new_val: V) -> Result<V, V>
-    where
-        K: Borrow<Q>,
-        Q: Hash + Eq,
-    {
-        let table = unsafe { &*self.table };
-        let buckets = table.bucket_slice();
-        let size_mask = table.size_mask;
-
-        let hash = hash::<Q, SipHasher13>(key);
-        let mut index = wrap_index(hash, self.capacity);
-
-        loop {
-            let cell = get_cell(buckets, index, size_mask);
-            if let Ok(previous) =
-                cell.fetch_update(SeqCst, SeqCst, |current| match current.key_offset {
-                    constants::EMPTY_KEY => Some(current),
-                    constants::DELETED_KEY => None,
-                    _ => {
-                        let key_offset = current.key_offset - constants::MIN_KEY;
-                        let found_key = self.keys.get(key_offset as usize)?;
-                        if found_key.borrow() == key {
-                            if current.value == expected {
-                                // Key matches, value matches, update to new value
-                                Some(Cell {
-                                    key_offset: current.key_offset,
-                                    value: new_val,
-                                })
-                            } else {
-                                // Key matches, value doesn't, return without updating
-                                Some(current)
-                            }
-                        } else {
-                            // Key doesn't match, try the next cell incase of collision
-                            None
-                        }
-                    }
-                })
-            {
-                // If fetch_update was Ok, we either; updated successfully, or...
-                if previous.value == expected {
-                    return Ok(previous.value);
-                }
-                // Didn't, because the value didn't match expected
-                return Err(previous.value);
-            }
-            // If the `fetch_update` was not_ok, the cell was a potential collision, so try the
-            // next cell
-            index = wrap_index(index as u64 + 1, self.capacity);
-        }
-    }
-
     /// Check whether a key already exists in the map.
     /// As expensive as `get`.
     pub fn contains_key<Q: ?Sized>(&self, key: &Q) -> bool
@@ -216,90 +159,132 @@ where
         K: Borrow<Q>,
         Q: Hash + Eq,
     {
-        let table = unsafe { self.table.as_ref()? };
-        let buckets = table.bucket_slice();
-        let size_mask = table.size_mask;
-
-        let hash = hash::<Q, SipHasher13>(key);
-        let mut index = wrap_index(hash, self.capacity);
-        // Unconditional loop is OK, because there are always spare empty buckets allocated.
-        loop {
-            let cell = get_cell(buckets, index, size_mask);
-            let cell_loaded = cell.load(Relaxed);
-            match cell_loaded.key_offset {
-                constants::EMPTY_KEY => {
-                    // An empty key has never been inserted to, we can safely return.
-                    return None;
-                }
-                constants::DELETED_KEY => {
-                    // A deleted key has been written to before, so collisions could have happened.
-                    // So we must keep searching.
-                }
-                _ => {
-                    // Check the key associated with the cell we found
-                    let key_offset = cell_loaded.key_offset - constants::MIN_KEY;
-                    let found_key = self.keys.get(key_offset as usize)?;
-                    if found_key.borrow() == key {
-                        // The key associated with this cell matches!
-                        return Some(cell_loaded.value);
-                    }
-                }
-            }
-            // The key at this cell was not equivalent, try the next cell in case of collisions
-            index = wrap_index(index as u64 + 1, self.capacity);
-        }
+        // Get just uses fetch_update but doesn't modify the cell
+        self._fetch_update(Relaxed, Relaxed, key, Some)
+            .ok()
+            .map(|previous| previous.value)
     }
 
-    /// Remove the entry from the map which contains `key`.
+    /// Fetch the value with the given key and update the value using `f`.
+    /// `f` should return `Some(new_value)` if it succeeds, or `None` if it fails.
+    /// Returns a `Result` containing the previous value.
+    ///
+    /// # Errors
+    /// This function will return an error if the key does not exist in the map, or if `f` failed
+    /// (returned `None`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use folklore::Map;
+    ///
+    /// let mut map: Map<u64, u16> = Map::with_capacity(128);
+    /// let key = 6446;
+    /// map.insert(key, 42);
+    /// // `f` will update the value to 76, only if it is currently 42
+    /// let f = |current| {
+    ///     if current == 42 {
+    ///         Some(76)
+    ///     } else {
+    ///         None
+    ///     }
+    /// };
+    /// let result = map.fetch_update(&key, f);
+    /// let result2 = map.fetch_update(&key, f);
+    /// assert_eq!(result, Ok(42));
+    /// assert_eq!(result2, Err(76));
+    /// assert_eq!(map.get(&key), Some(76));
+    /// ```
+    pub fn fetch_update<F, Q: ?Sized>(&mut self, key: &Q, mut f: F) -> Result<V, V>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq,
+        F: FnMut(V) -> Option<V>,
+    {
+        self._fetch_update(SeqCst, SeqCst, key, |current| {
+            f(current.value).map(|value| Cell {
+                key_offset: current.key_offset,
+                value,
+            })
+        })
+        .map(|previous| previous.value)
+        .map_err(|previous| previous.value)
+    }
+
+    /// Remove the map entry associated with `key`, if it exists.
     pub fn remove<Q: ?Sized>(&mut self, key: &Q)
     where
         K: Borrow<Q>,
         Q: Eq + Hash,
     {
-        let Some(table) = (unsafe { self.table.as_ref() }) else {
-            return;
-        };
+        if self
+            ._fetch_update(SeqCst, SeqCst, key, |current| {
+                Some(Cell {
+                    key_offset: constants::DELETED_KEY,
+                    value: current.value,
+                })
+            })
+            .is_ok()
+        {
+            self.count.fetch_sub(1, SeqCst);
+        }
+    }
+
+    /// Find the cell associated with `key` and update the cell using `f`.
+    /// `f` should return an Option with either `None` if it does not want to update the cell
+    /// (failed in some way), or `Ok(new_cell)` if it wants to update the cell.
+    fn _fetch_update<Q: ?Sized, F>(
+        &self,
+        fetch_order: Ordering,
+        update_order: Ordering,
+        key: &Q,
+        mut f: F,
+    ) -> Result<Cell<V>, Cell<V>>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq,
+        F: FnMut(Cell<V>) -> Option<Cell<V>>,
+    {
+        let table = unsafe { &*self.table };
         let buckets = table.bucket_slice();
         let size_mask = table.size_mask;
 
         let hash = hash::<Q, SipHasher13>(key);
         let mut index = wrap_index(hash, self.capacity);
 
-        // Unconditional loop is OK, because there are always spare empty buckets allocated.
+        let mut key_found = false;
+
         loop {
             let cell = get_cell(buckets, index, size_mask);
-            if let Ok(previous) =
-                cell.fetch_update(SeqCst, SeqCst, |current| match current.key_offset {
-                    // Empty means `key` cannot exist in the map
+            let result = cell.fetch_update(fetch_order, update_order, |current| {
+                match current.key_offset {
                     constants::EMPTY_KEY => Some(current),
-                    // Deleted, `key` might be in the map but had a collision, try the next cell
                     constants::DELETED_KEY => None,
                     _ => {
-                        let key_offset = current.key_offset as usize - constants::MIN_KEY as usize;
-                        // Fetch the associated key to check if it's equivalent to `key`
-                        let found_key = self.keys.get(key_offset)?;
+                        let key_offset = current.key_offset - constants::MIN_KEY;
+                        let found_key = self.keys.get(key_offset as usize)?;
                         if found_key.borrow() == key {
-                            // We found the key! Mark the cell as deleted
-                            Some(Cell {
-                                key_offset: constants::DELETED_KEY,
-                                value: current.value,
-                            })
-                        // The associated key of this cell doesn't match `key`, try the next cell
+                            key_found = true;
+                            f(current)
                         } else {
                             None
                         }
                     }
-                })
-            // The happy paths out of the above are: Cell was empty, or cell was found and
-            // removed. We can return in either of those cases
-            {
-                if previous.key_offset != constants::EMPTY_KEY {
-                    // If it was not empty, we removed it, so decrement count
-                    self.count.fetch_sub(1, SeqCst);
                 }
-                return;
+            });
+
+            if key_found {
+                // If we found the key, we can return the result of `f`.
+                return result;
             }
-            // If the `fetch_update` was not_ok, the cell was a potential collision, so try the
+
+            if let Ok(previous) = result {
+                // If we didn't find the key, but `fetch_update` returned Ok, that means we found
+                // an empty key.
+                return Err(previous);
+            }
+
+            // If we didn't find the key and the fetch update was not OK, the cell was a potential collision, so try the
             // next cell
             index = wrap_index(index as u64 + 1, self.capacity);
         }
@@ -340,7 +325,7 @@ where
     V: NoUninit + Eq,
 {
     fn default() -> Self {
-        Self::new(2048)
+        Self::with_capacity(2048)
     }
 }
 

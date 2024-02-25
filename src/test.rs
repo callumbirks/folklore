@@ -11,7 +11,7 @@ fn correct_traits() {
 
 #[test]
 fn insert_get_one() {
-    let mut map: Map<zstr<17>, u16> = Map::new(128);
+    let mut map: Map<zstr<17>, u16> = Map::with_capacity(128);
     let key: zstr<17> = zstr::make("Answer");
     assert!(map.insert(key, 42));
     assert_eq!(map.get(&key), Some(42));
@@ -19,7 +19,7 @@ fn insert_get_one() {
 
 #[test]
 fn insert_remove_one() {
-    let mut map: Map<zstr<17>, u16> = Map::new(128);
+    let mut map: Map<zstr<17>, u16> = Map::with_capacity(128);
     let key: zstr<17> = zstr::make("Answer");
     assert!(map.insert(key, 42));
     map.remove(&key);
@@ -28,7 +28,7 @@ fn insert_remove_one() {
 
 #[test]
 fn insert_duplicate() {
-    let mut map: Map<zstr<17>, u16> = Map::new(128);
+    let mut map: Map<zstr<17>, u16> = Map::with_capacity(128);
     let key: zstr<17> = zstr::make("Answer");
     assert!(map.insert(key, 42));
     assert!(!map.insert(key, 76));
@@ -36,7 +36,7 @@ fn insert_duplicate() {
 
 #[test]
 fn insert_duplicate_removed() {
-    let mut map: Map<zstr<17>, u16> = Map::new(128);
+    let mut map: Map<zstr<17>, u16> = Map::with_capacity(128);
     let key: zstr<17> = zstr::make("Answer");
     assert!(map.insert(key, 42));
     map.remove(&key);
@@ -45,7 +45,7 @@ fn insert_duplicate_removed() {
 
 #[test]
 fn full() {
-    let mut map: Map<zstr<17>, u16> = Map::new(128);
+    let mut map: Map<zstr<17>, u16> = Map::with_capacity(128);
     #[allow(clippy::cast_possible_truncation)]
     // Capacity may be slightly more than the requested capacity
     let capacity = map.capacity as u16;
@@ -59,7 +59,7 @@ fn full() {
 
 #[test]
 fn max_capacity() {
-    let mut map: Map<zstr<17>, u16> = Map::new(i16::MAX as usize);
+    let mut map: Map<zstr<17>, u16> = Map::with_capacity(i16::MAX as usize);
     #[allow(clippy::cast_possible_truncation)]
     let capacity = map.capacity as u16;
     for i in 0..capacity {
