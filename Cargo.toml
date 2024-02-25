@@ -1,0 +1,22 @@
+[package]
+name = "folklore"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[features]
+std = []
+
+[dependencies]
+siphasher = "1.0.0"
+bytemuck = "1.14.3"
+# Disabling default-features disables the spinlock fallback, so atomic reads and writes will always be lock-less
+atomic = { version = "0.6.0", default-features = false }
+
+[dev-dependencies]
+fixedstr = "0.5.5"
+
+[lints.clippy]
+pedantic = { priority = -1, level = "deny" }
+module_name_repetitions = "allow"
+
