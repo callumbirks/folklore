@@ -15,8 +15,14 @@ atomic = { version = "0.6.0", default-features = false }
 
 [dev-dependencies]
 fixedstr = "0.5.5"
+criterion = "0.5.1"
+rand = "0.8.5"
+leapfrog = { version = "0.3.0", features = ["stable_alloc"] }
+
+[[bench]]
+name = "hashmap"
+harness = false
 
 [lints.clippy]
 pedantic = { priority = -1, level = "deny" }
 module_name_repetitions = "allow"
-

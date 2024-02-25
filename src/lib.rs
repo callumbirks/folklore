@@ -88,7 +88,7 @@ where
 
     /// Insert a key-value pair into the map. Returns a bool representing success.
     /// Will succeed unless the key is already in the map or the map is at max capacity.
-    pub fn insert(&self, key: K, value: V) -> bool {
+    pub fn insert(&mut self, key: K, value: V) -> bool {
         if self.count.load(Relaxed) >= self.capacity {
             return false;
         }
@@ -194,7 +194,7 @@ where
     }
 
     /// Remove the entry from the map which contains `key`.
-    pub fn remove<Q: ?Sized>(&self, key: &Q)
+    pub fn remove<Q: ?Sized>(&mut self, key: &Q)
     where
         K: Borrow<Q>,
         Q: Eq + Hash,
