@@ -25,4 +25,5 @@ The actual map entries store a "key offset" rather than a key, because the keys 
 - [ ] Consider using a "value store", like the key store, which would allow for values of any size.
 
 Inspired by the `ConcurrentMap` implementation in [couchbase/fleece](https://github.com/couchbase/fleece/blob/master/Fleece/Support/ConcurrentMap.cc).
+
 [robclu/leapfrog](https://github.com/robclu/leapfrog) was instrumental in my understanding how this kinda thing should be written in Rust. The leapfrog map also doesn't suffer from many of the limitations of this map, and is a much better choice in most cases.
