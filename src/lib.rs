@@ -32,6 +32,10 @@ mod constants {
     pub const MIN_KEY: OffsetT = 2;
 }
 
+/// A lock-less concurrent hash map.
+/// Has a maximum capacity of `isize::MAX`.
+/// Values must be 2 bytes each.
+/// Values are immutable once inserted.
 pub struct Map<K, V>
 where
     K: Eq + Hash,
@@ -139,6 +143,8 @@ where
         }
     }
 
+    /// Check whether a key already exists in the map.
+    /// As expensive as `get`.
     pub fn contains_key<Q: ?Sized>(&self, key: &Q) -> bool
     where
         K: Borrow<Q>,
@@ -147,6 +153,7 @@ where
         self.get(key).is_some()
     }
 
+    /// Get the value from the map associated with the given key.
     pub fn get<Q: ?Sized>(&self, key: &Q) -> Option<V>
     where
         K: Borrow<Q>,
@@ -186,6 +193,7 @@ where
         }
     }
 
+    /// Remove the entry from the map which contains `key`.
     pub fn remove<Q: ?Sized>(&self, key: &Q)
     where
         K: Borrow<Q>,
