@@ -88,7 +88,7 @@ where
 
     /// Insert a key-value pair into the map. Returns a bool representing success.
     /// Will succeed unless the key is already in the map or the map is at max capacity.
-    pub fn insert(&mut self, key: K, value: V) -> bool {
+    pub fn insert(&self, key: K, value: V) -> bool {
         if self.count.load(SeqCst) >= self.capacity {
             return false;
         }
@@ -195,7 +195,7 @@ where
     /// assert_eq!(result2, Err(76));
     /// assert_eq!(map.get(&key), Some(76));
     /// ```
-    pub fn fetch_update<F, Q: ?Sized>(&mut self, key: &Q, mut f: F) -> Result<V, V>
+    pub fn fetch_update<F, Q: ?Sized>(&self, key: &Q, mut f: F) -> Result<V, V>
     where
         K: Borrow<Q>,
         Q: Hash + Eq,
@@ -212,7 +212,7 @@ where
     }
 
     /// Remove the map entry associated with `key`, if it exists.
-    pub fn remove<Q: ?Sized>(&mut self, key: &Q)
+    pub fn remove<Q: ?Sized>(&self, key: &Q)
     where
         K: Borrow<Q>,
         Q: Eq + Hash,
