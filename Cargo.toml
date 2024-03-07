@@ -11,9 +11,10 @@ keywords = ["hashmap", "map", "lock-free", "concurrent"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-siphasher = "1.0.0"
+hash32 = "0.3.1"
 bytemuck = "1.14.3"
-# Disabling default-features disables the spinlock fallback, so atomic reads and writes will always be lock-less
+thread_local = "1.1.8"
+# Disabling default-features disables the spinlock fallback, so atomic reads and writes will always be lock-free
 atomic = { version = "0.6.0", default-features = false }
 
 [dev-dependencies]
@@ -29,6 +30,10 @@ harness = false
 [[bench]]
 name = "parallel"
 harness = false
+
+[profile.bench]
+codegen-units = 1
+lto = false
 
 [lints.clippy]
 pedantic = { priority = -1, level = "deny" }

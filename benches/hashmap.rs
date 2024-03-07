@@ -22,7 +22,8 @@ fn bench_folklore_hashmap(c: &mut Criterion) {
         let mut mask = 0u64;
 
         b.iter(|| {
-            for _ in 0..6 {
+            // TODO: 0..6
+            for _ in 0..100 {
                 mask <<= 4;
                 mask |= bits & 0b00001111;
                 bits >>= 4;

@@ -38,7 +38,8 @@ fn bench_folklore_hashmap(c: &mut Criterion) {
                             mask |= bits & 0b00001111;
                             bits >>= 4;
 
-                            for i in 0..NUM_OPS {
+                            // TODO: NUM_OPS
+                            for i in 0..1000 {
                                 let key: u64 = rng.gen::<u64>() & mask;
                                 map.insert(key, i as u16);
                                 let key: u64 = rng.gen::<u64>() & mask;

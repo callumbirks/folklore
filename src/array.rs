@@ -10,7 +10,8 @@ use core::sync::atomic::Ordering::{Relaxed, SeqCst};
 
 /// A Vector-like data structure that allows for concurrent access and insertion.
 /// It has a fixed capacity and cannot be resized.
-/// Once elements have been appended, they cannot be removed, unless
+/// Once elements have been appended, they cannot be removed, unless they are at the end of the
+/// array.
 pub struct ConcurrentArray<T> {
     inner: Box<ConcurrentArena<T>>,
     capacity: usize,
@@ -68,8 +69,8 @@ struct AllocResult {
 }
 
 /// A very basic arena "allocator" that allows for lock-free concurrent allocation.
-/// De-allocation will only succeed if the block being deallocated was the most recently allocated.
-/// None of the functions are aware of `T`, it's just used to enforce correct memory layout.
+/// De-allocation will only succeed if the block being deallocated is at the end (index of `next -
+/// size_of::<T>`).
 struct ConcurrentArena<T> {
     bytes: *mut [u8],
     next: AtomicUsize,
