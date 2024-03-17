@@ -1,10 +1,10 @@
 [package]
 name = "folklore"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/callumbirks/folklore/"
-description = "A lock-less concurrent hash map"
+description = "A lock-free concurrent hash map"
 categories = ["concurrency", "data-structures", "no-std"]
 keywords = ["hashmap", "map", "lock-free", "concurrent"]
 
