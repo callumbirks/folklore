@@ -1,3 +1,6 @@
+use core::hash::Hash;
+use hash32::Hasher;
+
 /// A macro to assert checks on generic type parameters at compile time.
 /// Credits: <https://morestina.net/blog/1940/compile-time-checks-in-generic-functions-work-and-you-can-use-them-in-your-code>
 #[macro_export]
@@ -27,4 +30,36 @@ macro_rules! generic_asserts {
     (@nested $t:ty, $($label:ident: $test:expr;)+) => {
         $(<$t>::$label;)+
     }
+}
+
+#[macro_export]
+macro_rules! wrap {
+    (<$to_ty:ty>: $in:expr,$cap:expr) => {
+        ($in as usize % $cap as usize) as $to_ty
+    };
+}
+
+pub fn hash<T: ?Sized, H>(key: &T) -> u32
+where
+    T: Hash,
+    H: Hasher + Default,
+{
+    let mut hasher = H::default();
+    key.hash(&mut hasher);
+    hasher.finish32()
+}
+
+pub fn allocate<T>(count: usize) -> *mut T {
+    let layout = core::alloc::Layout::array::<T>(count).unwrap();
+    unsafe { alloc::alloc::alloc(layout).cast::<T>() }
+}
+
+pub fn allocate_zeroed<T>(count: usize) -> *mut T {
+    let layout = core::alloc::Layout::array::<T>(count).unwrap();
+    unsafe { alloc::alloc::alloc_zeroed(layout).cast::<T>() }
+}
+
+pub fn deallocate<T>(ptr: *mut T, count: usize) {
+    let layout = core::alloc::Layout::array::<T>(count).unwrap();
+    unsafe { alloc::alloc::dealloc(ptr.cast::<u8>(), layout) }
 }

@@ -16,7 +16,7 @@ fn bench_folklore_hashmap(c: &mut Criterion) {
     group.throughput(Throughput::Elements(NUM_OPS * 6 * 2_u64));
     group.sample_size(10);
     group.bench_function("insert_and_remove", |b| {
-        let mut map = folklore::Map::with_capacity(NUM_KEYS);
+        let mut map = folklore::HashMap::with_capacity(NUM_KEYS);
         let mut rng = thread_rng();
         let mut bits: u64 = rng.gen();
         let mut mask = 0u64;
@@ -31,7 +31,7 @@ fn bench_folklore_hashmap(c: &mut Criterion) {
                     let key: u64 = rng.gen::<u64>() & mask;
                     map.insert(key, i as u16);
                     let key: u64 = rng.gen::<u64>() & mask;
-                    map.remove(&key);
+                    map.update(&key, i as u16);
                 }
             }
         })
@@ -62,9 +62,9 @@ fn bench_leapfrog_leapmap(c: &mut Criterion) {
 
                 for i in 0..NUM_OPS {
                     let key: u64 = rng.gen::<u64>() & mask;
-                    map.insert(key, i);
+                    map.insert(key, i as u16);
                     let key: u64 = rng.gen::<u64>() & mask;
-                    map.remove(&key);
+                    map.update(&key, i as u16);
                 }
             }
         })
@@ -95,9 +95,9 @@ fn bench_std_hashmap(c: &mut Criterion) {
 
                 for i in 0..NUM_OPS {
                     let key: u64 = rng.gen::<u64>() & mask;
-                    map.insert(key, i);
+                    map.insert(key, i as u16);
                     let key: u64 = rng.gen::<u64>() & mask;
-                    map.remove(&key);
+                    map.insert(key, i as u16);
                 }
             }
         })

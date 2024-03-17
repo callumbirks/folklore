@@ -15,6 +15,7 @@ siphasher = "1.0.0"
 bytemuck = "1.14.3"
 # Disabling default-features disables the spinlock fallback, so atomic reads and writes will always be lock-less
 atomic = { version = "0.6.0", default-features = false }
+hash32 = "0.3.1"
 
 [dev-dependencies]
 fixedstr = "0.5.5"

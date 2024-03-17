@@ -22,7 +22,7 @@ fn bench_folklore_hashmap(c: &mut Criterion) {
     ));
     group.sample_size(10);
     group.bench_function("parallel_insert_remove", |b| {
-        let map = Arc::new(folklore::Map::with_capacity(NUM_KEYS));
+        let map = Arc::new(folklore::HashMap::with_capacity(NUM_KEYS));
         b.iter_custom(|iters| {
             let mut handles = vec![];
             for _ in 0..THREAD_COUNT {
@@ -42,7 +42,7 @@ fn bench_folklore_hashmap(c: &mut Criterion) {
                                 let key: u64 = rng.gen::<u64>() & mask;
                                 map.insert(key, i as u16);
                                 let key: u64 = rng.gen::<u64>() & mask;
-                                map.remove(&key);
+                                map.update(&key, i as u16);
                             }
                         }
                     }
@@ -87,9 +87,9 @@ fn bench_leapfrog_leapmap(c: &mut Criterion) {
 
                             for i in 0..NUM_OPS {
                                 let key: u64 = rng.gen::<u64>() & mask;
-                                map.insert(key, i);
+                                map.insert(key, i as u16);
                                 let key: u64 = rng.gen::<u64>() & mask;
-                                map.remove(&key);
+                                map.update(&key, i as u16);
                             }
                         }
                     }
@@ -137,9 +137,9 @@ fn bench_std_hashmap(c: &mut Criterion) {
                             let mut map_write = map.write().unwrap();
                             for i in 0..NUM_OPS {
                                 let key: u64 = rng.gen::<u64>() & mask;
-                                map_write.insert(key, i);
+                                map_write.insert(key, i as u16);
                                 let key: u64 = rng.gen::<u64>() & mask;
-                                map_write.remove(&key);
+                                map_write.insert(key, i as u16);
                             }
                         }
                     }
