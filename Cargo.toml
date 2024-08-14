@@ -1,6 +1,6 @@
 [package]
 name = "folklore"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/callumbirks/folklore/"
@@ -11,9 +11,8 @@ keywords = ["hashmap", "map", "lock-free", "concurrent"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-siphasher = "1.0.0"
 bytemuck = "1.14.3"
-# Disabling default-features disables the spinlock fallback, so atomic reads and writes will always be lock-less
+# Disabling default-features disables the spinlock fallback, so atomic reads and writes will always be lock-free
 atomic = { version = "0.6.0", default-features = false }
 hash32 = "0.3.1"
 
