@@ -5,7 +5,7 @@ use hash32::Hasher;
 /// Credits: <https://morestina.net/blog/1940/compile-time-checks-in-generic-functions-work-and-you-can-use-them-in-your-code>
 #[macro_export]
 macro_rules! generic_const_assert {
-    ($t:ident, $check:expr) => {{
+    ($t:ident: $check:expr) => {{
         #[allow(unused_attributes)]
         struct Check<$t>($t);
         impl<$t> Check<$t> {

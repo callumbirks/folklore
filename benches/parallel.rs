@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
 
-const NUM_KEYS: usize = 1 << 14;
+const CAPACITY: usize = i16::MAX as usize;
 const NUM_OPS: u64 = i16::MAX as u64;
 const THREAD_COUNT: usize = 8;
 
@@ -21,8 +21,8 @@ fn bench_folklore_hashmap(c: &mut Criterion) {
         NUM_OPS * 6 * 2_u64 * THREAD_COUNT as u64,
     ));
     group.sample_size(10);
-    group.bench_function("parallel_insert_remove", |b| {
-        let map = Arc::new(folklore::HashMap::with_capacity(NUM_KEYS));
+    group.bench_function("parallel_insert_update", |b| {
+        let map = Arc::new(folklore::HashMap::with_capacity(CAPACITY));
         b.iter_custom(|iters| {
             let mut handles = vec![];
             for _ in 0..THREAD_COUNT {
@@ -39,9 +39,9 @@ fn bench_folklore_hashmap(c: &mut Criterion) {
                             bits >>= 4;
 
                             for i in 0..NUM_OPS {
-                                let key: u64 = rng.gen::<u64>() & mask;
+                                let key = rng.gen::<u64>() & mask;
                                 map.insert(key, i as u16);
-                                let key: u64 = rng.gen::<u64>() & mask;
+                                let key = rng.gen::<u64>() & mask;
                                 map.update(&key, i as u16);
                             }
                         }
@@ -64,9 +64,9 @@ fn bench_leapfrog_leapmap(c: &mut Criterion) {
         NUM_OPS * 6 * 2_u64 * THREAD_COUNT as u64,
     ));
     group.sample_size(10);
-    group.bench_function("parallel_insert_remove", |b| {
+    group.bench_function("parallel_insert_update", |b| {
         let map = Arc::new(leapfrog::LeapMap::with_capacity_and_hasher(
-            NUM_KEYS,
+            CAPACITY,
             BuildHasherDefault::<HashFn>::default(),
         ));
 
@@ -86,9 +86,9 @@ fn bench_leapfrog_leapmap(c: &mut Criterion) {
                             bits >>= 4;
 
                             for i in 0..NUM_OPS {
-                                let key: u64 = rng.gen::<u64>() & mask;
+                                let key = rng.gen::<u64>() & mask;
                                 map.insert(key, i as u16);
-                                let key: u64 = rng.gen::<u64>() & mask;
+                                let key = rng.gen::<u64>() & mask;
                                 map.update(&key, i as u16);
                             }
                         }
@@ -111,10 +111,10 @@ fn bench_std_hashmap(c: &mut Criterion) {
         NUM_OPS * 6 * 2_u64 * THREAD_COUNT as u64,
     ));
     group.sample_size(10);
-    group.bench_function("parallel_insert_remove", |b| {
+    group.bench_function("parallel_insert_update", |b| {
         let map = Arc::new(std::sync::RwLock::new(
             std::collections::HashMap::with_capacity_and_hasher(
-                NUM_KEYS,
+                CAPACITY,
                 BuildHasherDefault::<HashFn>::default(),
             ),
         ));
@@ -136,9 +136,9 @@ fn bench_std_hashmap(c: &mut Criterion) {
 
                             let mut map_write = map.write().unwrap();
                             for i in 0..NUM_OPS {
-                                let key: u64 = rng.gen::<u64>() & mask;
+                                let key = rng.gen::<u64>() & mask;
                                 map_write.insert(key, i as u16);
-                                let key: u64 = rng.gen::<u64>() & mask;
+                                let key = rng.gen::<u64>() & mask;
                                 map_write.insert(key, i as u16);
                             }
                         }

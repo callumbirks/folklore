@@ -1,18 +1,17 @@
 use crate::generic_asserts;
 use alloc::alloc::{alloc, dealloc};
-use alloc::boxed::Box;
 use core::alloc::Layout;
 use core::fmt::Debug;
 use core::mem::{align_of, size_of};
-use core::ptr::{slice_from_raw_parts_mut, NonNull};
+use core::ptr::slice_from_raw_parts_mut;
 use core::sync::atomic::AtomicUsize;
-use core::sync::atomic::Ordering::{Relaxed, SeqCst};
+use core::sync::atomic::Ordering;
 
 /// A Vector-like data structure that allows for concurrent access and insertion.
 /// It has a fixed capacity and cannot be resized.
-/// Once elements have been appended, they cannot be removed, unless
+/// Once elements have been appended, they cannot be removed, unless it was the most recently inserted element.
 pub struct ConcurrentArray<T> {
-    inner: Box<ConcurrentArena<T>>,
+    inner: ConcurrentArena<T>,
     capacity: usize,
 }
 
@@ -23,14 +22,14 @@ impl<T> ConcurrentArray<T> {
             POWER_2_ALIGN: align_of::<T>().is_power_of_two();
         );
         Self {
-            inner: Box::new(ConcurrentArena::new(capacity)),
+            inner: ConcurrentArena::new(capacity),
             capacity,
         }
     }
 
     pub fn push(&self, item: T) -> Option<(&T, usize)> {
         let alloc_res = self.inner.push()?;
-        let ptr = alloc_res.bytes.as_ptr().cast::<T>();
+        let ptr = alloc_res.bytes.cast::<T>();
         unsafe {
             ptr.write(item);
         }
@@ -47,23 +46,14 @@ impl<T> ConcurrentArray<T> {
     }
 
     pub fn get(&self, index: usize) -> Option<&T> {
-        let ptr = self.inner.get(index * size_of::<T>())?;
-        unsafe { Some(&*ptr.as_ptr().cast::<T>()) }
-    }
-
-    const fn full_layout(capacity: usize) -> Layout {
-        unsafe { Layout::from_size_align_unchecked(size_of::<T>() * capacity, align_of::<T>()) }
-    }
-
-    const fn item_layout() -> Layout {
-        // Safe because we have a compile-time check that T fits the requirements of `Layout`
-        // in our `new` method.
-        unsafe { Layout::from_size_align_unchecked(size_of::<T>(), align_of::<T>()) }
+        self.inner
+            .get(index * size_of::<T>())
+            .map(|ptr| unsafe { &*ptr.cast::<T>() })
     }
 }
 
 struct AllocResult {
-    bytes: NonNull<[u8]>,
+    bytes: *mut u8,
     index: usize,
 }
 
@@ -82,7 +72,7 @@ impl<T> ConcurrentArena<T> {
     pub fn new(item_capacity: usize) -> Self {
         let layout = Self::full_layout(item_capacity);
         let bytes_ptr = unsafe { alloc(layout) };
-        let bytes_slice = unsafe { core::slice::from_raw_parts_mut(bytes_ptr, layout.size()) };
+        let bytes_slice = slice_from_raw_parts_mut(bytes_ptr, layout.size());
         Self {
             bytes: bytes_slice,
             next: AtomicUsize::new(0),
@@ -92,64 +82,39 @@ impl<T> ConcurrentArena<T> {
     }
 
     pub fn push(&self) -> Option<AllocResult> {
-        let capacity = self.byte_capacity;
-        let size = Self::elem_layout().size();
-
-        let alloc_res = self.next.fetch_update(SeqCst, SeqCst, |next| {
-            if next >= capacity {
-                return None;
-            }
-            Some(next + size)
-        });
-
-        if let Ok(next) = alloc_res {
-            Some(AllocResult {
-                bytes: NonNull::from(unsafe {
-                    &*slice_from_raw_parts_mut(self.bytes.cast::<u8>().add(next), size)
-                }),
+        self.next
+            .fetch_update(Ordering::Release, Ordering::Acquire, |next| {
+                if next >= self.byte_capacity {
+                    return None;
+                }
+                Some(next + size_of::<T>())
+            })
+            .ok()
+            .map(|next| AllocResult {
+                bytes: unsafe { self.bytes.cast::<u8>().add(next) },
                 index: next,
             })
-        } else {
-            None
-        }
     }
 
-    pub fn get(&self, index: usize) -> Option<NonNull<[u8]>> {
+    pub fn get(&self, index: usize) -> Option<*mut u8> {
         if index >= self.byte_capacity {
             return None;
         }
-        let slice = self.index_to_slice(index);
-        Some(unsafe { NonNull::new_unchecked(slice) })
+
+        Some(unsafe { self.bytes.cast::<u8>().add(index) })
     }
 
     /// Remove an item from the arena at index. Will only succeed if the item was the most recently
     /// added item.
     pub fn try_remove(&self, index: usize) -> bool {
-        let expected = index + Self::elem_layout().size();
+        let expected = index + size_of::<T>();
         self.next
-            .compare_exchange(expected, index, SeqCst, Relaxed)
+            .compare_exchange(expected, index, Ordering::Release, Ordering::Acquire)
             .is_ok()
     }
 
     fn index_to_slice(&self, index: usize) -> *mut [u8] {
-        unsafe {
-            slice_from_raw_parts_mut(
-                self.bytes.cast::<u8>().add(index),
-                Self::elem_layout().size(),
-            )
-        }
-    }
-
-    fn index_to_ptr(&self, index: usize) -> *mut u8 {
-        unsafe { self.bytes.cast::<u8>().add(index) }
-    }
-
-    fn ptr_to_index(&self, ptr: *const T) -> usize {
-        ptr as usize - self.bytes as *const u8 as usize
-    }
-
-    const fn elem_layout() -> Layout {
-        unsafe { Layout::from_size_align_unchecked(size_of::<T>(), align_of::<T>()) }
+        unsafe { slice_from_raw_parts_mut(self.bytes.cast::<u8>().add(index), size_of::<T>()) }
     }
 
     fn elem_count(&self) -> usize {
@@ -164,7 +129,7 @@ impl<T> ConcurrentArena<T> {
 impl<T> Drop for ConcurrentArena<T> {
     fn drop(&mut self) {
         unsafe {
-            self.next.store(usize::MAX, SeqCst);
+            self.next.store(usize::MAX, Ordering::Release);
             dealloc(self.bytes.cast(), Self::full_layout(self.elem_count()));
         }
     }

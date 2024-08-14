@@ -1,12 +1,12 @@
 # folklore
-A lock-less concurrent hash map, based on the 'folklore' implementation described in ["Concurrent Hash Tables: Fast and General(?)!" by Maier et al.](https://arxiv.org/pdf/1601.04017.pdf)
+A lock-free concurrent hash map, based on the 'folklore' implementation described in ["Concurrent Hash Tables: Fast and General(?)!" by Maier et al.](https://arxiv.org/pdf/1601.04017.pdf)
 
 ## What?
 This has some major limitations compared to a more general hash-map implementation. Namely;
 - It cannot be grown past its initial capacity.
-- The capacity is limited to `i16::MAX`_*_.
+- The capacity is limited to `i16::MAX`.
 - It can only store values which are exactly 2 bytes.
-- Removals are not supported (because of the immense slowdown caused by tombstones filling up the map).
+- Removals are not (currently) supported (because of the immense slowdown caused by tombstones filling up the map).
 
 The only benefits are:
 - Blazingly fast 🔥 for concurrent access / modification.
@@ -15,28 +15,29 @@ The only benefits are:
 This is kind of just a fun project exploring the implementation of something I read about in an academic paper. I wouldn't really recommend using it.
 
 ## How?
-Map entries are a 16-bit key offset, and a 16-bit value. This means that any operation on a map entry can be completed with a single 32-bit CAS instruction. This could be modified / extended to use a 32-bit key offset and 32-bit value, which would improve the max capacity to `i32::MAX`, allow values of 4 bytes, and still all operations would be done in single CAS instructions (of 64 bits).
+Map entries are a 16-bit key offset, a 16-bit value, and a 32-bit key hash. This means that any operation on a map entry can be completed with a single 64-bit (1 word) CAS instruction.
 
-The actual map entries store a "key offset" rather than a key, because the keys are allocated in a separate store. The key store is a "ConcurrentArray" which is lock-less and safe for concurrent access, but entries are immutable, and can only be removed if they were the most recently added.
+The actual map entries store a "key offset" rather than a key, because the keys are allocated in a separate store. The key store is a "ConcurrentArray" which is lock-free and safe for concurrent access, but entries are immutable, and can only be removed if they were the most recently added.
+
+## Consistency
+Loads and Stores generally use `Ordering::Acquire` and `Ordering::Release` respectively. Initial lookup for an entry uses `Ordering::Relaxed` for performance reasons, so sometimes a newly inserted key might be missed by another thread.
 
 ## Performance
-Some basic benchmarks are included in this repo which compare against `std::collections::HashMap` and `leapfrog::LeapMap`. There are a set of benchmarks for single-thread, and a set for multi-thread.
+Some basic benchmarks are included in this repo which compare against `std::collections::HashMap` and `leapfrog::LeapMap`. There are a set of benchmarks for single-thread, and a set for multi-thread. Here are the numbers I got on an M1 Pro MacBook:
 ### Single-threaded
 | Map                  | Time     | Throughput     |
 | -------------------- | -------- | -------------- |
-| std HashMap          | 12.011ms | 32.736 Melem/s |
-| leapfrog LeapMap     | 11.250ms | 34.952 Melem/s |
-| folklore HashMap     | 7.7111ms | 50.992 Melem/s |
+| std HashMap          | 7.9036ms | 49.750 Melem/s |
+| leapfrog LeapMap     | 8.8983ms | 44.189 Melem/s |
+| folklore HashMap     | 4.9738ms | 79.055 Melem/s |
 ### Multi-threaded (8 threads)
 | Map                  | Time     | Throughput     |
 | -------------------- | -------- | -------------- |
-| std HashMap          | 126.47ms | 24.873 Melem/s |
-| leapfrog LeapMap     | 23.950ms | 131.34 Melem/s |
-| folklore HashMap     | 17.704ms | 177.68 Melem/s |
+| std HashMap (RWLock) | 58.689ms | 53.599 Melem/s |
+| leapfrog LeapMap     | 18.841ms | 166.96 Melem/s |
+| folklore HashMap     | 16.571ms | 189.83 Melem/s |
 
-The numbers of each benchmark are pretty useless on their own, but comparing them we can see that for single-threaded scenarios there isn't much benefit in choosing this library over the std (hashbrown) HashMap. But it really shines in multi-threaded scenarios. Again these benchmarks are very basic, only testing insertion and updating.
-
-_\* Actually, the capacity will be slightly more than `i16::MAX`, to account for the load factor. But the `::new()` function won't accept anything higher than `i16::MAX`_.
+The numbers of each benchmark are pretty useless on their own, but comparing them we can see that folklore manages to just about beat out leapfrog. Again these benchmarks are very basic, only testing insertion and updating.
 
 Inspired by the `ConcurrentMap` implementation in [couchbase/fleece](https://github.com/couchbase/fleece/blob/master/Fleece/Support/ConcurrentMap.cc).
 

@@ -12,13 +12,16 @@ use atomic::{Atomic, Ordering};
 use bytemuck::NoUninit;
 use core::borrow::Borrow;
 use core::hash::Hash;
-use hash32::FnvHasher;
 use core::mem::size_of;
+use core::ptr::slice_from_raw_parts;
 use core::sync::atomic::AtomicU16;
+use hash32::FnvHasher;
 
 type Size = u16;
-const DEFAULT_CAPACITY: usize = 2048;
-const BUCKET_CAPACITY: Size = 4;
+type HashT = u32;
+
+const DEFAULT_CAPACITY: usize = 64;
+const BUCKET_CAPACITY: Size = 8;
 const LOAD_FACTOR: f64 = 0.6;
 
 /// A `HashMap` which doesn't allow any deletion, and only allows for 2-byte values
@@ -47,6 +50,7 @@ where
         // This assertion is only ran at compile time
         generic_asserts!((V);
             VALUE_SIZE: size_of::<V>() == size_of::<Size>();
+            ONE_WORD: size_of::<Entry<V>>() == size_of::<u64>();
         );
         // Panic if capacity > i16::MAX
         assert!(i16::try_from(capacity).is_ok());
@@ -63,7 +67,7 @@ where
         #[allow(clippy::cast_possible_truncation)]
         Self {
             table: create_table(allocated_size),
-            key_store: ConcurrentArray::new(allocated_size),
+            key_store: ConcurrentArray::new(capacity.next_power_of_two()),
             size_mask: (allocated_size - 1) as Size,
             capacity: capacity as Size,
             count: AtomicU16::new(0),
@@ -71,61 +75,36 @@ where
     }
 
     pub fn insert(&self, key: K, value: V) -> bool {
-        if self.count.load(Ordering::SeqCst) >= self.capacity {
+        if self.count.load(Ordering::Relaxed) >= self.capacity {
             return false;
         }
 
-        let index_hash = util::hash::<_, FnvHasher>(&key);
-        let mut index = crate::wrap!(<Size>: index_hash, self.size_mask as usize + 1);
-
-        let Some((new_key, new_key_index)) = self.key_store.push(key) else {
+        let Some(entry) = self._find_empty_entry(&key) else {
             return false;
         };
 
-        #[allow(clippy::cast_possible_truncation)]
-        let key_offset = new_key_index as Size + constants::MIN_KEY;
+        let key_hash = self.hash(&key);
 
-        let buckets = self.bucket_slice();
+        let Some((_, key_index)) = self.key_store.push(key) else {
+            return false;
+        };
 
-        let mut duplicate = false;
+        let key_offset = key_index as Size + constants::MIN_KEY;
 
-        loop {
-            let entry = get_entry(buckets, index, self.size_mask);
-            match entry.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
-                // `fetch_update` may call this func multiple times, so reset duplicate
-                duplicate = false;
-                match current.key_offset {
-                    constants::EMPTY_KEY => Some(Entry { key_offset, value }),
-                    existing => {
-                        if let Some(existing_key) = self.key_store.get(existing as usize) {
-                            if new_key == existing_key {
-                                duplicate = true;
-                                None
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    }
-                }
-            }) {
-                Ok(_) => {
-                    self.count.fetch_add(1, Ordering::SeqCst);
-                    return true;
-                }
-                Err(_) => {
-                    if duplicate {
-                        // Most of the time this should remove successfully, unless another thread
-                        // inserted a key after we did.
-                        self.key_store.remove(new_key_index);
-                        return false;
-                    }
-                    // If `fetch_update` failed but key wasn't duplicate, this was a collision
-                }
-            }
-            index = crate::wrap!(<Size>: index + 1, self.size_mask as usize + 1);
-        }
+        self.count.fetch_add(1, Ordering::Relaxed);
+
+        entry
+            .compare_exchange(
+                Entry::EMPTY,
+                Entry {
+                    key_hash,
+                    key_offset,
+                    value,
+                },
+                Ordering::Release,
+                Ordering::Acquire,
+            )
+            .is_ok()
     }
 
     pub fn get<Q: ?Sized>(&self, key: &Q) -> Option<V>
@@ -133,7 +112,9 @@ where
         K: Borrow<Q>,
         Q: Hash + Eq,
     {
-        self._fetch_update(key, Some).ok().map(|v| v.value)
+        self._find_entry(key)
+            .map(|e| e.load(Ordering::Acquire))
+            .map(|e| e.value)
     }
 
     pub fn update<Q: ?Sized>(&self, key: &Q, value: V) -> Option<V>
@@ -143,18 +124,18 @@ where
     {
         self._fetch_update(key, |current| {
             Some(Entry {
+                key_hash: current.key_hash,
                 key_offset: current.key_offset,
                 value,
             })
         })
-        .ok()
         .map(|previous| previous.value)
     }
 
     ///
     /// # Errors
     /// If the key doesn't exist in the map, or the function `f` returned None.
-    pub fn fetch_update<Q: ?Sized, F>(&self, key: &Q, mut f: F) -> Result<V, Option<V>>
+    pub fn fetch_update<Q: ?Sized, F>(&self, key: &Q, mut f: F) -> Option<V>
     where
         K: Borrow<Q>,
         Q: Hash + Eq,
@@ -162,59 +143,126 @@ where
     {
         self._fetch_update(key, |current| {
             f(current.value).map(|value| Entry {
+                key_hash: current.key_hash,
                 key_offset: current.key_offset,
                 value,
             })
         })
         .map(|previous| previous.value)
-        .map_err(|previous| match previous.key_offset {
-            constants::EMPTY_KEY => None,
-            _ => Some(previous.value),
-        })
     }
 
-    fn _fetch_update<Q: ?Sized, F>(&self, key: &Q, mut f: F) -> Result<Entry<V>, Entry<V>>
+    fn _fetch_update<Q: ?Sized, F>(&self, key: &Q, f: F) -> Option<Entry<V>>
     where
         K: Borrow<Q>,
         Q: Hash + Eq,
         F: FnMut(Entry<V>) -> Option<Entry<V>>,
     {
-        let index_hash = util::hash::<_, FnvHasher>(key);
-        let mut index = crate::wrap!(<Size>: index_hash, self.size_mask as usize + 1);
+        let entry = self._find_entry(key)?;
+
+        entry
+            .fetch_update(Ordering::Release, Ordering::Acquire, f)
+            .ok()
+    }
+
+    fn _find_entry<Q: ?Sized>(&self, key: &Q) -> Option<&Atomic<Entry<V>>>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq,
+    {
+        let (key_hash, mut index) = self.hash_and_index(key);
 
         let buckets = self.bucket_slice();
 
-        loop {
+        for _ in 0..self.size_mask {
             let entry = get_entry(buckets, index, self.size_mask);
-            match entry.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| match current
-                .key_offset
-            {
-                constants::EMPTY_KEY => None,
-                existing => {
-                    let existing_offset = existing - constants::MIN_KEY;
-                    let Some(existing_key) = self.key_store.get(existing_offset as usize) else {
-                        return None;
-                    };
-                    if key == existing_key.borrow() {
-                        f(current)
-                    } else {
-                        None
+            match entry.load(Ordering::Relaxed) {
+                Entry {
+                    key_offset: constants::EMPTY_KEY,
+                    ..
+                } => return None,
+                Entry {
+                    key_offset,
+                    key_hash: entry_hash,
+                    ..
+                } if key_hash == entry_hash => {
+                    let key_offset = key_offset - constants::MIN_KEY;
+                    if let Some(existing_key) = self.key_store.get(key_offset as usize) {
+                        if key == existing_key.borrow() {
+                            return Some(entry);
+                        }
                     }
                 }
-            }) {
-                Ok(previous) => return Ok(previous),
-                Err(previous) => {
-                    if matches!(previous.key_offset, constants::EMPTY_KEY) {
-                        return Err(previous);
-                    }
-                }
+                _ => {}
             }
-            index = crate::wrap!(<Size>: index + 1, self.size_mask as usize + 1);
+            index = self.next_index(index);
         }
+        None
+    }
+
+    fn _find_empty_entry<Q: ?Sized>(&self, key: &Q) -> Option<&Atomic<Entry<V>>>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq,
+    {
+        let (key_hash, mut index) = self.hash_and_index(key);
+
+        let buckets = self.bucket_slice();
+
+        for _ in 0..self.size_mask {
+            let entry = get_entry(buckets, index, self.size_mask);
+            match entry.load(Ordering::Relaxed) {
+                Entry {
+                    key_offset: constants::EMPTY_KEY,
+                    ..
+                } => return Some(entry),
+                Entry {
+                    key_offset,
+                    key_hash: entry_hash,
+                    ..
+                } if key_hash == entry_hash => {
+                    let key_offset = key_offset - constants::MIN_KEY;
+                    if let Some(existing_key) = self.key_store.get(key_offset as usize) {
+                        if key == existing_key.borrow() {
+                            return None;
+                        }
+                    }
+                }
+                _ => {}
+            }
+            index = self.next_index(index);
+        }
+        None
     }
 
     fn bucket_slice(&self) -> &[Bucket<V>] {
-        unsafe { core::slice::from_raw_parts(self.table, self.size_mask as usize + 1) }
+        unsafe { &*slice_from_raw_parts(self.table, self.size_mask as usize + 1) }
+    }
+
+    /// Hash the key, returning a value between 1 and `Size::MAX`.
+    fn hash<Q: ?Sized>(&self, key: &Q) -> HashT
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq,
+    {
+        util::hash::<_, FnvHasher>(key).max(1)
+    }
+
+    fn next_index(&self, index: Size) -> Size {
+        crate::wrap!(<Size>: index as usize + 1, self.size_mask as usize + 1)
+    }
+
+    /// Hash the key, and derive the table index from the hash.
+    /// Return (hash, index).
+    fn hash_and_index<Q: ?Sized>(&self, key: &Q) -> (HashT, Size)
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq,
+    {
+        let hash = self.hash(key);
+        (
+            hash,
+            crate::wrap!(<Size>: hash - 1, self.size_mask as usize + 1),
+        )
     }
 }
 
@@ -264,10 +312,16 @@ struct Bucket<V> {
 }
 
 #[derive(Clone, Copy)]
-#[repr(align(4))]
+// align(8) is necessary to enable the use of single-instruction atomic operations.
+#[repr(align(8))]
 struct Entry<V> {
+    key_hash: u32,
     key_offset: Size,
     value: V,
 }
 
 unsafe impl<V: Copy + NoUninit> NoUninit for Entry<V> {}
+
+impl<V> Entry<V> {
+    pub const EMPTY: Self = unsafe { core::mem::zeroed() };
+}
