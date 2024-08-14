@@ -4,7 +4,7 @@ use alloc::{
     string::{String, ToString},
 };
 use fixedstr::zstr;
-use rayon::iter::IntoParallelIterator;
+use rayon::prelude::*;
 
 fn traits_check<T: Sized + Send + Sync + Unpin + Default>() {}
 
@@ -48,6 +48,18 @@ fn full() {
         assert_eq!(map.get(&key), Some(i));
     }
     assert!(!map.insert("Overflow".to_string(), 77));
+}
+
+#[test]
+fn full_parallel() {
+    let map: HashMap<String, u16> = HashMap::default();
+    let capacity = map.capacity;
+    // Insert a bunch of elements in parallel to try to break the capacity check
+    (0..capacity as usize * 2).into_par_iter().for_each(|i| {
+        let key = format!("Answer{}", i);
+        map.insert(key.clone(), 42_u16);
+    });
+    assert_eq!(map.len(), capacity as usize);
 }
 
 #[test]

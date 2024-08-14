@@ -74,6 +74,8 @@ where
         }
     }
 
+    /// Insert a key-value pair into the map.
+    /// Returns true if the key was inserted, false if the map is full or the key already exists.
     pub fn insert(&self, key: K, value: V) -> bool {
         if self.count.load(Ordering::Relaxed) >= self.capacity {
             return false;
@@ -83,7 +85,7 @@ where
             return false;
         };
 
-        let key_hash = self.hash(&key);
+        let key_hash = self._hash(&key);
 
         let Some((_, key_index)) = self.key_store.push(key) else {
             return false;
@@ -91,9 +93,7 @@ where
 
         let key_offset = key_index as Size + constants::MIN_KEY;
 
-        self.count.fetch_add(1, Ordering::Relaxed);
-
-        entry
+        if entry
             .compare_exchange(
                 Entry::EMPTY,
                 Entry {
@@ -105,18 +105,37 @@ where
                 Ordering::Acquire,
             )
             .is_ok()
+        {
+            self.count.fetch_add(1, Ordering::Relaxed);
+            true
+        } else {
+            false
+        }
     }
 
+    /// Get the value associated with a key. Returns None if the key doesn't exist.
     pub fn get<Q: ?Sized>(&self, key: &Q) -> Option<V>
     where
         K: Borrow<Q>,
         Q: Hash + Eq,
     {
         self._find_entry(key)
-            .map(|e| e.load(Ordering::Acquire))
+            .map(|e| e.load(Ordering::Relaxed))
             .map(|e| e.value)
     }
 
+    /// Get the key at the given index in the map's key store.
+    /// Keys are stored in the order they were inserted.
+    pub fn get_key(&self, index: usize) -> Option<&K> {
+        self.key_store.get(index)
+    }
+
+    /// Get the count of key-value pairs in the map.
+    pub fn len(&self) -> usize {
+        self.count.load(Ordering::Relaxed) as usize
+    }
+
+    /// Update the value associated with a key. Returns the previous value on success, or None on failure.
     pub fn update<Q: ?Sized>(&self, key: &Q, value: V) -> Option<V>
     where
         K: Borrow<Q>,
@@ -132,7 +151,8 @@ where
         .map(|previous| previous.value)
     }
 
-    ///
+    /// Update the value associated with a key using an update function. Returns the previous value on success, or None on failure.
+    /// The update function should return Some(V) with the new value, or None if the value should not be updated.
     /// # Errors
     /// If the key doesn't exist in the map, or the function `f` returned None.
     pub fn fetch_update<Q: ?Sized, F>(&self, key: &Q, mut f: F) -> Option<V>
@@ -151,6 +171,7 @@ where
         .map(|previous| previous.value)
     }
 
+    #[inline]
     fn _fetch_update<Q: ?Sized, F>(&self, key: &Q, f: F) -> Option<Entry<V>>
     where
         K: Borrow<Q>,
@@ -169,9 +190,9 @@ where
         K: Borrow<Q>,
         Q: Hash + Eq,
     {
-        let (key_hash, mut index) = self.hash_and_index(key);
+        let (key_hash, mut index) = self._hash_and_index(key);
 
-        let buckets = self.bucket_slice();
+        let buckets = self._bucket_slice();
 
         for _ in 0..self.size_mask {
             let entry = get_entry(buckets, index, self.size_mask);
@@ -194,9 +215,9 @@ where
                 }
                 _ => {}
             }
-            index = self.next_index(index);
+            index = self._next_index(index);
         }
-        None
+        unreachable!("There cannot be 0 empty entries, because the usable capacity is less than the allocated capacity.")
     }
 
     fn _find_empty_entry<Q: ?Sized>(&self, key: &Q) -> Option<&Atomic<Entry<V>>>
@@ -204,9 +225,9 @@ where
         K: Borrow<Q>,
         Q: Hash + Eq,
     {
-        let (key_hash, mut index) = self.hash_and_index(key);
+        let (key_hash, mut index) = self._hash_and_index(key);
 
-        let buckets = self.bucket_slice();
+        let buckets = self._bucket_slice();
 
         for _ in 0..self.size_mask {
             let entry = get_entry(buckets, index, self.size_mask);
@@ -229,39 +250,41 @@ where
                 }
                 _ => {}
             }
-            index = self.next_index(index);
+            index = self._next_index(index);
         }
-        None
+        unreachable!("There cannot be 0 empty entries, because the usable capacity is less than the allocated capacity.")
     }
 
-    fn bucket_slice(&self) -> &[Bucket<V>] {
+    fn _bucket_slice(&self) -> &[Bucket<V>] {
         unsafe { &*slice_from_raw_parts(self.table, self.size_mask as usize + 1) }
     }
 
-    /// Hash the key, returning a value between 1 and `Size::MAX`.
-    fn hash<Q: ?Sized>(&self, key: &Q) -> HashT
+    fn _next_index(&self, index: Size) -> Size {
+        crate::wrap!(<Size>: index as usize + 1, self.size_mask as usize + 1)
+    }
+
+    /// Hash the key, returning a value of type [`HashT`].
+    #[inline]
+    fn _hash<Q: ?Sized>(&self, key: &Q) -> HashT
     where
         K: Borrow<Q>,
         Q: Hash + Eq,
     {
-        util::hash::<_, FnvHasher>(key).max(1)
-    }
-
-    fn next_index(&self, index: Size) -> Size {
-        crate::wrap!(<Size>: index as usize + 1, self.size_mask as usize + 1)
+        util::hash::<_, FnvHasher>(key)
     }
 
     /// Hash the key, and derive the table index from the hash.
     /// Return (hash, index).
-    fn hash_and_index<Q: ?Sized>(&self, key: &Q) -> (HashT, Size)
+    #[inline]
+    fn _hash_and_index<Q: ?Sized>(&self, key: &Q) -> (HashT, Size)
     where
         K: Borrow<Q>,
         Q: Hash + Eq,
     {
-        let hash = self.hash(key);
+        let hash = self._hash(key);
         (
             hash,
-            crate::wrap!(<Size>: hash - 1, self.size_mask as usize + 1),
+            crate::wrap!(<Size>: hash, self.size_mask as usize + 1),
         )
     }
 }

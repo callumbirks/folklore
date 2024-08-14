@@ -21,6 +21,7 @@ The actual map entries store a "key offset" rather than a key, because the keys 
 
 ## Consistency
 Loads and Stores generally use `Ordering::Acquire` and `Ordering::Release` respectively. Initial lookup for an entry uses `Ordering::Relaxed` for performance reasons, so sometimes a newly inserted key might be missed by another thread.
+However, that thread will never overwrite the key, because a stronger ordering is used for the actual insertion.
 
 ## Performance
 Some basic benchmarks are included in this repo which compare against `std::collections::HashMap` and `leapfrog::LeapMap`. There are a set of benchmarks for single-thread, and a set for multi-thread. Here are the numbers I got on an M1 Pro MacBook:
