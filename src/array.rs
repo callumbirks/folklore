@@ -97,7 +97,7 @@ impl<T> ConcurrentArena<T> {
     }
 
     pub fn get(&self, index: usize) -> Option<*mut u8> {
-        if index >= self.byte_capacity {
+        if index >= self.next.load(Ordering::Acquire) {
             return None;
         }
 

@@ -80,3 +80,16 @@ fn max_capacity() {
 fn over_capacity() {
     let _ = HashMap::<u64, u16>::with_capacity(i16::MAX as usize + 1);
 }
+
+#[test]
+fn iter() {
+    let map = HashMap::<u64, u16>::with_capacity(100);
+    for i in 0..100 {
+        assert!(map.insert(i as u64, i));
+    }
+
+    for (i, (k, v)) in map.iter().enumerate() {
+        assert_eq!(*k, i as u64);
+        assert_eq!(*k, v as u64);
+    }
+}

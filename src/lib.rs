@@ -109,6 +109,9 @@ where
             self.count.fetch_add(1, Ordering::Relaxed);
             true
         } else {
+            // Attempt to remove the key which we no longer need.
+            // May fail if another key was inserted since we added it.
+            self.key_store.remove(key_index);
             false
         }
     }
@@ -169,6 +172,11 @@ where
             })
         })
         .map(|previous| previous.value)
+    }
+
+    #[inline]
+    pub fn iter(&self) -> <&Self as IntoIterator>::IntoIter {
+        self.into_iter()
     }
 
     #[inline]
@@ -286,6 +294,48 @@ where
             hash,
             crate::wrap!(<Size>: hash, self.size_mask as usize + 1),
         )
+    }
+}
+
+impl<'map, K, V> IntoIterator for &'map HashMap<K, V>
+where
+    K: Hash + Eq,
+    V: Copy + NoUninit,
+{
+    type Item = (&'map K, V);
+    type IntoIter = Iter<'map, K, V>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        Iter {
+            map: self,
+            index: 0,
+        }
+    }
+}
+
+pub struct Iter<'map, K, V>
+where
+    K: Hash + Eq,
+    V: Copy + NoUninit,
+{
+    map: &'map HashMap<K, V>,
+    index: usize,
+}
+
+impl<'map, K, V> Iterator for Iter<'map, K, V>
+where
+    K: Hash + Eq,
+    V: Copy + NoUninit,
+{
+    type Item = (&'map K, V);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // Loop over the map's keys, because they are stored congiguously.
+        // This is faster than looping over the entries, which are scattered between many empty entries.
+        let key = self.map.get_key(self.index)?;
+        let value = self.map.get(key)?;
+        self.index += 1;
+        Some((key, value))
     }
 }
 
