@@ -127,6 +127,14 @@ where
             .map(|e| e.value)
     }
 
+    pub fn contains_key<Q: ?Sized>(&self, key: &Q) -> bool
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq,
+    {
+        self._find_entry(key).is_some()
+    }
+
     /// Get the key at the given index in the map's key store.
     /// Keys are stored in the order they were inserted.
     pub fn get_key(&self, index: usize) -> Option<&K> {
