@@ -347,6 +347,20 @@ where
     }
 }
 
+impl<K, V> Clone for HashMap<K, V>
+where
+    K: Hash + Eq + Clone,
+    V: Copy + NoUninit,
+{
+    fn clone(&self) -> Self {
+        let new = Self::with_capacity(self.capacity as usize);
+        for (key, value) in self {
+            new.insert(key.clone(), value);
+        }
+        new
+    }
+}
+
 impl<K: Hash + Eq, V: Copy + NoUninit> Drop for HashMap<K, V> {
     fn drop(&mut self) {
         util::deallocate(self.table, self.size_mask as usize + 1);
